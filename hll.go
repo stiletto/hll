@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/gogo/protobuf/proto"
+	"gopkg.in/mgo.v2/bson"
 )
 
 const (
@@ -233,13 +234,18 @@ func (h *Hll) cardinalityNormal() uint64 {
 
 // When marshalling an Hll to JSON, we only marshal a subset of its fields.
 type jsonableHll struct {
-	BigM       *normal `json:"M,omitempty"`
-	SparseList *sparse `json:"s,omitempty"`
-	P          uint    `json:"p"`
-	PPrime     uint    `json:"pp"`
+	BigM       *normal `json:"M,omitempty" bson:"M,omitempty"`
+	SparseList *sparse `json:"s,omitempty" bson:"s,omitempty"`
+	P          uint    `json:"p" json:"p"`
+	PPrime     uint    `json:"pp" json:"pp"`
 }
 
 func (h *Hll) MarshalJSON() ([]byte, error) {
+        bson, _ := h.GetBSON()
+	return json.Marshal(bson)
+}
+
+func (h *Hll) GetBSON() (interface{}, error) {
 	// Combine tmpSet with sparse list. This saves serializing the tmpSet, which saves space.
 	h.mergeTmpSetIfAny()
 
@@ -247,14 +253,33 @@ func (h *Hll) MarshalJSON() ([]byte, error) {
 	if len(*bigM) == 0 {
 		bigM = nil
 	}
-
-	return json.Marshal(&jsonableHll{bigM, h.sparseList, h.p, h.pPrime})
+	return &jsonableHll{bigM, h.sparseList, h.p, h.pPrime}, nil
 }
 
 func (h *Hll) UnmarshalJSON(buf []byte) error {
 	j := jsonableHll{}
 
 	if err := json.Unmarshal(buf, &j); err != nil {
+		return err
+	}
+
+	// Copy field values from the jsonable model to the real Hll struct.
+	*h = *NewHll(j.P, j.PPrime)
+	h.sparseList = nil
+	h.bigM = nil
+
+	h.sparseList = j.SparseList
+	if j.BigM != nil {
+		h.bigM = *j.BigM
+	}
+	h.isSparse = (h.sparseList != nil)
+	return nil
+}
+
+func (h *Hll) SetBSON(raw bson.Raw) error {
+	j := jsonableHll{}
+
+	if err := raw.Unmarshal(&j); err != nil {
 		return err
 	}
 
